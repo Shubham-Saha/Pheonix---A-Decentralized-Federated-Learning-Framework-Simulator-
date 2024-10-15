@@ -49,6 +49,8 @@ parser.add_argument("--topology", type=str, default="fully_connected",
                     help="Network topology: fully_connected, ring, random, custom")
 parser.add_argument("--topology_file", type=str, default=None,
                     help="Path to the custom topology file (edge list). Required if topology is 'custom'.")
+parser.add_argument("--max_attacks", type=int, default=None, help="Maximum number of times an attacker can perform an attack")
+
 
 args = parser.parse_args()
 
@@ -102,14 +104,6 @@ FASHION_MNIST_CLASSES = [
 ]
     
 def visualize_data_distribution(train_datasets, num_nodes, class_names):
-    """
-    Visualizes the distribution of classes across different workers using overlapping bar charts.
-
-    Args:
-        train_datasets (list): List of torch.utils.data.Subset objects for each worker.
-        num_nodes (int): Total number of workers.
-        class_names (list): List of class names corresponding to FashionMNIST.
-    """
     num_classes = len(class_names)
     class_counts = np.zeros((num_nodes, num_classes))  # Assuming 10 classes in FashionMNIST
 
@@ -231,6 +225,8 @@ def build_topology(num_nodes, topology_type, topology_file=None):
 
 # Training function for each node
 def local_train(node_id, local_model, train_dataset, epochs, attacker_type):
+    # Use a fixed seed per node to ensure consistency
+    node_rng = random.Random(node_id)
     device = torch.device("cpu")
     model = local_model
     model.to(device)
@@ -244,7 +240,7 @@ def local_train(node_id, local_model, train_dataset, epochs, attacker_type):
     for epoch in range(epochs):
         # Simulate delayed response per epoch
         if attacker_type == 'delay':
-            time_delay = random.uniform(5, 10)
+            time_delay = node_rng.uniform(5, 10)
             print(f"[node_{node_id}] Epoch {epoch+1}: Delaying computation by {time_delay:.2f} seconds.")
             time.sleep(time_delay)
         for data, target in train_loader:
@@ -291,8 +287,6 @@ def evaluate(model, test_loader):
     test_loss /= len(test_loader.dataset)
     accuracy = correct / len(test_loader.dataset)
 
-    # Removed classification report as per user request
-
     f1 = f1_score(all_targets, all_preds, average='macro', zero_division=1)
     precision = precision_score(all_targets, all_preds, average='macro', zero_division=1)
     recall = recall_score(all_targets, all_preds, average='macro', zero_division=1)
@@ -322,10 +316,6 @@ def aggregate(models_state_dicts, data_sizes):
     return aggregated_state_dict
 
 def find_nearest_participating_neighbor(G, node, participating_nodes):
-    """
-    Find the nearest participating neighbor for a given node using BFS.
-    Returns the node ID of the nearest participating neighbor or None if not found.
-    """
     visited = set()
     queue = [node]
     visited.add(node)
@@ -369,12 +359,16 @@ def display_and_store_model_parameters(node_name, model_state_dict, node_stats, 
         node_stats[node_name][key]['std'].append(std)
 
 # Plotting functions
-
 def plot_metrics_bar_chart(metrics, rounds_range):
-    """
-    Plots the average of all nodes' F1, Accuracy, Precision, and Recall per round using a grouped bar chart.
-    """
-    avg_metrics = {
+    # Prepare data for training metrics
+    avg_metrics_train = {
+        'Accuracy': [],
+        'F1 Score': [],
+        'Precision': [],
+        'Recall': []
+    }
+    # Prepare data for testing metrics
+    avg_metrics_test = {
         'Accuracy': [],
         'F1 Score': [],
         'Precision': [],
@@ -382,62 +376,101 @@ def plot_metrics_bar_chart(metrics, rounds_range):
     }
     
     for rnd in rounds_range:
-        acc = []
-        f1 = []
-        prec = []
-        rec = []
+        acc_train, f1_train, prec_train, rec_train = [], [], [], []
+        acc_test, f1_test, prec_test, rec_test = [], [], [], []
         for node in metrics:
+            if len(metrics[node]['train_accuracy']) >= rnd:
+                acc_train.append(metrics[node]['train_accuracy'][rnd-1])
+                f1_train.append(metrics[node]['train_f1_score'][rnd-1])
+                prec_train.append(metrics[node]['train_precision'][rnd-1])
+                rec_train.append(metrics[node]['train_recall'][rnd-1])
             if len(metrics[node]['accuracy']) >= rnd:
-                acc.append(metrics[node]['accuracy'][rnd-1])
-                f1.append(metrics[node]['f1_score'][rnd-1])
-                prec.append(metrics[node]['precision'][rnd-1])
-                rec.append(metrics[node]['recall'][rnd-1])
-        avg_metrics['Accuracy'].append(np.nanmean(acc) if acc else 0)
-        avg_metrics['F1 Score'].append(np.nanmean(f1) if f1 else 0)
-        avg_metrics['Precision'].append(np.nanmean(prec) if prec else 0)
-        avg_metrics['Recall'].append(np.nanmean(rec) if rec else 0)
+                acc_test.append(metrics[node]['accuracy'][rnd-1])
+                f1_test.append(metrics[node]['f1_score'][rnd-1])
+                prec_test.append(metrics[node]['precision'][rnd-1])
+                rec_test.append(metrics[node]['recall'][rnd-1])
+        # Compute average metrics over all nodes for this round
+        avg_metrics_train['Accuracy'].append(np.nanmean(acc_train) if acc_train else 0)
+        avg_metrics_train['F1 Score'].append(np.nanmean(f1_train) if f1_train else 0)
+        avg_metrics_train['Precision'].append(np.nanmean(prec_train) if prec_train else 0)
+        avg_metrics_train['Recall'].append(np.nanmean(rec_train) if rec_train else 0)
+        
+        avg_metrics_test['Accuracy'].append(np.nanmean(acc_test) if acc_test else 0)
+        avg_metrics_test['F1 Score'].append(np.nanmean(f1_test) if f1_test else 0)
+        avg_metrics_test['Precision'].append(np.nanmean(prec_test) if prec_test else 0)
+        avg_metrics_test['Recall'].append(np.nanmean(rec_test) if rec_test else 0)
     
-    # Set up the bar chart
+    # Plot Training Metrics
     x = np.arange(len(rounds_range))  # the label locations
-    width = 0.2  # the width of the bars
-
-    plt.figure(figsize=(12, 8))
+    num_metrics = 4
+    width = 0.2  # Adjusted for better visibility
+    
+    plt.figure(figsize=(10, 6))
     # Use a colorblind-friendly palette from seaborn
-    palette = sns.color_palette("Dark2", 4)
-
-    plt.bar(x - 1.5*width, avg_metrics['Accuracy'], width, label='Accuracy', color=palette[0])
-    plt.bar(x - 0.5*width, avg_metrics['F1 Score'], width, label='F1 Score', color=palette[1])
-    plt.bar(x + 0.5*width, avg_metrics['Precision'], width, label='Precision', color=palette[2])
-    plt.bar(x + 1.5*width, avg_metrics['Recall'], width, label='Recall', color=palette[3])
-
-    # Add some text for labels, title and custom x-axis tick labels, etc.
+    palette = sns.color_palette("Set2", num_metrics)
+    
+    # Compute offsets for bar positions
+    offsets = np.array([-1.5, -0.5, 0.5, 1.5]) * width
+    
+    plt.bar(x + offsets[0], avg_metrics_train['Accuracy'], width, label='Accuracy', color=palette[0])
+    plt.bar(x + offsets[1], avg_metrics_train['F1 Score'], width, label='F1 Score', color=palette[1])
+    plt.bar(x + offsets[2], avg_metrics_train['Precision'], width, label='Precision', color=palette[2])
+    plt.bar(x + offsets[3], avg_metrics_train['Recall'], width, label='Recall', color=palette[3])
+    
     plt.ylabel('Metric Value')
     plt.xlabel('Round')
-    plt.title('Average Metrics per Round')
+    plt.title('Average Training Metrics per Round')
     plt.xticks(x, [f'Round {rnd}' for rnd in rounds_range])
-    plt.ylim(0, 1)  # Assuming all metrics are between 0 and 1
+    plt.ylim(0, 1)
     plt.legend()
     plt.grid(axis='y')
     plt.tight_layout()
-    plt.savefig('average_metrics_bar_chart.png')
+    plt.savefig('average_training_metrics_bar_chart.png')
     plt.close()
-    print("Average metrics bar chart saved as 'average_metrics_bar_chart.png'.")
+    print("Average training metrics bar chart saved as 'average_training_metrics_bar_chart.png'.")
+    
+    # Plot Testing Metrics
+    plt.figure(figsize=(10, 6))
+    # Use a colorblind-friendly palette from seaborn
+    palette = sns.color_palette("Set2", num_metrics)
+    
+    plt.bar(x + offsets[0], avg_metrics_test['Accuracy'], width, label='Accuracy', color=palette[0])
+    plt.bar(x + offsets[1], avg_metrics_test['F1 Score'], width, label='F1 Score', color=palette[1])
+    plt.bar(x + offsets[2], avg_metrics_test['Precision'], width, label='Precision', color=palette[2])
+    plt.bar(x + offsets[3], avg_metrics_test['Recall'], width, label='Recall', color=palette[3])
+    
+    plt.ylabel('Metric Value')
+    plt.xlabel('Round')
+    plt.title('Average Testing Metrics per Round')
+    plt.xticks(x, [f'Round {rnd}' for rnd in rounds_range])
+    plt.ylim(0, 1)
+    plt.legend()
+    plt.grid(axis='y')
+    plt.tight_layout()
+    plt.savefig('average_testing_metrics_bar_chart.png')
+    plt.close()
+    print("Average testing metrics bar chart saved as 'average_testing_metrics_bar_chart.png'.")
+
 
 def plot_loss_line(metrics, rounds_range):
-    """
-    Plots the average loss over rounds as a line graph.
-    """
     avg_loss_per_round = []
+    avg_train_loss_per_round = []
     for rnd in rounds_range:
         losses = []
+        train_losses = []
         for node in metrics:
             if len(metrics[node]['loss']) >= rnd:
                 losses.append(metrics[node]['loss'][rnd-1])
+            if len(metrics[node]['train_loss']) >= rnd:
+                train_losses.append(metrics[node]['train_loss'][rnd-1])
         avg_loss = np.nanmean(losses) if losses else np.nan
+        avg_train_loss = np.nanmean(train_losses) if train_losses else np.nan
         avg_loss_per_round.append(avg_loss)
+        avg_train_loss_per_round.append(avg_train_loss)
     
     plt.figure(figsize=(10, 6))
-    plt.plot(rounds_range, avg_loss_per_round, marker='o', color='darkred', label='Average Loss')
+    plt.plot(rounds_range, avg_train_loss_per_round, marker='o', color='blue', label='Average Training Loss')
+    plt.plot(rounds_range, avg_loss_per_round, marker='o', color='red', label='Average Test Loss')
     plt.title('Average Loss over Rounds')
     plt.xlabel('Round')
     plt.ylabel('Loss')
@@ -448,10 +481,8 @@ def plot_loss_line(metrics, rounds_range):
     plt.close()
     print("Average loss plot saved as 'average_loss_over_rounds.png'.")
 
+
 def plot_training_aggregation_times(rounds_range, total_training_times, avg_training_times, total_aggregation_times, avg_aggregation_times):
-    """
-    Plots the total and average training and aggregation times per round as line graphs.
-    """
     plt.figure(figsize=(12, 6))
     
     plt.plot(rounds_range, total_training_times, marker='o', label='Total Training Time (s)', color='darkgreen')
@@ -470,9 +501,6 @@ def plot_training_aggregation_times(rounds_range, total_training_times, avg_trai
     print("Training and aggregation times plot saved as 'training_aggregation_times_per_round.png'.")
 
 def plot_additional_metrics(rounds_range, cpu_usages, round_times):
-    """
-    Plots CPU usage and Round times over rounds.
-    """
     # Plot CPU Usage over Rounds
     plt.figure(figsize=(10, 6))
     plt.plot(rounds_range, cpu_usages, marker='o', label='CPU Usage (%)', color='darkorange')
@@ -503,10 +531,10 @@ def plot_additional_metrics(rounds_range, cpu_usages, round_times):
 def run_simulation():
     global metrics, cpu_usages, round_times, node_training_times, aggregation_times
     num_nodes = args.num_nodes
-    train_datasets, test_dataset, labels = load_datasets_dirichlet(num_nodes, alpha=0.5)  # Increased alpha for balance
+    train_datasets, test_dataset, labels = load_datasets_dirichlet(num_nodes, alpha=0.5)  
     print_class_distribution(train_datasets)
     
-    visualize_data_distribution(train_datasets, num_nodes, FASHION_MNIST_CLASSES)  # Call visualization function
+    visualize_data_distribution(train_datasets, num_nodes, FASHION_MNIST_CLASSES)
     nodes = create_nodes(num_nodes)
 
     # Build network topology
@@ -524,10 +552,9 @@ def run_simulation():
     print("Network topology plot saved as 'network_topology.png'.")
 
     # Map datasets to nodes
-    node_datasets = {node: train_datasets[node] for node in nodes}  # Correct mapping
+    node_datasets = {node: train_datasets[node] for node in nodes}
 
     # Split the global test_dataset into per-node test datasets
-    # *** Added Code Start ***
     # Shuffle and split test dataset equally among nodes
     test_indices = list(range(len(test_dataset)))
     random.shuffle(test_indices)
@@ -540,18 +567,38 @@ def run_simulation():
         node_test_subset = torch.utils.data.Subset(test_dataset, node_test_indices)
         node_test_loader = torch.utils.data.DataLoader(node_test_subset, batch_size=32, shuffle=False)
         test_loaders_per_node[nodes[i]] = node_test_loader
-    # *** Added Code End ***
+
+    random.seed(42)  # Fixed seed for participant selection
+    np.random.seed(42)
+
+    # Precompute participating nodes for each round
+    num_rounds = args.rounds
+    participating_nodes_per_round = []
+    num_participants = max(1, int(num_nodes * args.participation_rate))
+
+    # Use a fixed seed for participation selection
+    participation_rng = random.Random(42)  # Use any fixed number
+    for rnd in range(1, num_rounds + 1):
+        participating_nodes = participation_rng.sample(nodes, num_participants)
+        participating_nodes_per_round.append(participating_nodes)
 
     # Identify attacker nodes
     attacker_node_ids = []
+    attack_counts = {}
     if args.use_attackers:
         if args.attacker_nodes is not None:
             attacker_node_ids = args.attacker_nodes
         else:
             # Ensure num_attackers does not exceed num_nodes
             num_attackers = min(args.num_attackers, num_nodes)
-            attacker_node_ids = random.sample(range(num_nodes), num_attackers)
+            # Use fixed seed random generator for attacker selection
+            attacker_rng = random.Random(12345)
+            attacker_node_ids = attacker_rng.sample(range(num_nodes), num_attackers)
         print(f"Attacker nodes: {attacker_node_ids} with attacks: {args.attacks}")
+        # Initialize attack counts for each attacker
+        for attacker_node in attacker_node_ids:
+                attack_counts[attacker_node] = 0  # Initialize attack count to 0
+
 
     # Initialize local models for each node
     local_models = {}
@@ -571,21 +618,32 @@ def run_simulation():
             start_time_round = time.time()
             cpu_usage = psutil.cpu_percent(interval=None)  # Record CPU usage at the start
 
-            # Select participating nodes based on participation_rate
-            num_participants = max(1, int(num_nodes * args.participation_rate))
-            participating_nodes = random.sample(nodes, num_participants)
+            # Use precomputed participating nodes
+            participating_nodes = participating_nodes_per_round[rnd - 1]
             print(f"Participating nodes: {participating_nodes}")
+            
+            # Select participating nodes based on participation_rate
+            '''num_participants = max(1, int(num_nodes * args.participation_rate))
+            participating_nodes = random.sample(nodes, num_participants)
+            print(f"Participating nodes: {participating_nodes}")'''
 
             # Local training for each participating node
             future_to_node = {}
             for node in participating_nodes:
                 attacker_type = None
                 if node in attacker_node_ids:
-                    if args.attacks:
-                        attacker_type = random.choice(args.attacks)
-                        print(f"Node {node} is performing '{attacker_type}' attack.")
+                    # Determine if the attacker will perform an attack in this round
+                    max_attacks = args.max_attacks
+                    performed_attacks = attack_counts[node]
+                    if max_attacks is None or performed_attacks < max_attacks:
+                    # Attacker will perform an attack
+                        if args.attacks:
+                            attacker_type = random.choice(args.attacks)
+                            attack_counts[node] += 1  # Increment attack count
+                            print(f"Node {node} is performing '{attacker_type}' attack.")
                     else:
-                        print(f"Node {node} is set as attacker but no attacks specified.")
+                        # Attacker will not perform an attack
+                        print(f"Node {node} is an attacker but will not perform attack in this round (attack limit reached).")
                 # Load the local model
                 local_model = local_models[node]
                 # Submit local training task
@@ -670,13 +728,31 @@ def run_simulation():
                 else:
                     print(f"Node {node} has no participating neighbors to receive updates from and retains its current model.")
 
-            # **Modified Evaluation Phase Start**
+
+                # Evaluate each node's model on its own training data
+            print("\n=== Evaluation Phase of training data ===")
+            for node in nodes:
+                train_loader = torch.utils.data.DataLoader(node_datasets[node], batch_size=32, shuffle=False)
+                model = local_models[node]
+                print(f"\nEvaluating model for node_{node} on training data...")
+                train_loss, train_accuracy, train_f1, train_precision, train_recall = evaluate(model, train_loader)
+                print(f"[Round {rnd}] Training Data Evaluation of node_{node} -> Loss: {train_loss:.4f}, "
+                        f"Accuracy: {train_accuracy:.4f}, F1 Score: {train_f1:.4f}, "
+                        f"Precision: {train_precision:.4f}, Recall: {train_recall:.4f}")
+                # Record training data metrics per node
+                metrics[node]['train_loss'].append(train_loss)
+                metrics[node]['train_accuracy'].append(train_accuracy)
+                metrics[node]['train_f1_score'].append(train_f1)
+                metrics[node]['train_precision'].append(train_precision)
+                metrics[node]['train_recall'].append(train_recall)
+
+
             # Evaluate each node's model on its own test data
-            print("\n=== Evaluation Phase ===")
+            print("\n=== Evaluation Phase of testing data ===")
             for node in nodes:
                 test_loader = test_loaders_per_node[node]
                 model = local_models[node]
-                print(f"\nEvaluating model for node_{node}...")
+                print(f"\nEvaluating model for node_{node} on testing data...")
                 loss, accuracy, f1, precision, recall = evaluate(model, test_loader)
                 print(f"[Round {rnd}] Evaluation of node_{node} -> Loss: {loss:.4f}, Accuracy: {accuracy:.4f}, "
                       f"F1 Score: {f1:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}")
@@ -735,7 +811,7 @@ def main_with_plot():
             std_cpu_usage = np.std(cpu_usages)
             avg_round_time = np.mean(round_times)
             std_round_time = np.std(round_times)
-            print(f"\nAverage CPU Usage per Round: {avg_cpu_usage:.2f}%")
+            #print(f"\nAverage CPU Usage per Round: {avg_cpu_usage:.2f}%")
             print(f"Average Time Taken per Round: {avg_round_time:.2f} seconds")
 
             # Calculate total metrics
