@@ -240,7 +240,7 @@ def local_train(node_id, local_model, train_dataset, epochs, attacker_type):
     for epoch in range(epochs):
         # Simulate delayed response per epoch
         if attacker_type == 'delay':
-            time_delay = node_rng.uniform(5, 10)
+            time_delay = node_rng.uniform(30, 50)
             print(f"[node_{node_id}] Epoch {epoch+1}: Delaying computation by {time_delay:.2f} seconds.")
             time.sleep(time_delay)
         for data, target in train_loader:
@@ -621,11 +621,6 @@ def run_simulation():
             # Use precomputed participating nodes
             participating_nodes = participating_nodes_per_round[rnd - 1]
             print(f"Participating nodes: {participating_nodes}")
-            
-            # Select participating nodes based on participation_rate
-            '''num_participants = max(1, int(num_nodes * args.participation_rate))
-            participating_nodes = random.sample(nodes, num_participants)
-            print(f"Participating nodes: {participating_nodes}")'''
 
             # Local training for each participating node
             future_to_node = {}
@@ -808,31 +803,61 @@ def main_with_plot():
         # Calculate and print detailed statistics
         if cpu_usages and round_times:
             avg_cpu_usage = np.mean(cpu_usages)
-            std_cpu_usage = np.std(cpu_usages)
+            #std_cpu_usage = np.std(cpu_usages)
             avg_round_time = np.mean(round_times)
-            std_round_time = np.std(round_times)
-            #print(f"\nAverage CPU Usage per Round: {avg_cpu_usage:.2f}%")
+            #std_round_time = np.std(round_times)
+            print(f"\nAverage CPU Usage per Round: {avg_cpu_usage:.2f}%")
             print(f"Average Time Taken per Round: {avg_round_time:.2f} seconds")
 
             # Calculate total metrics
             total_cpu_usage = np.sum(cpu_usages)
             total_round_time = np.sum(round_times)
-            print(f"Total CPU Usage across all Rounds: {total_cpu_usage:.2f}%")
-            print(f"Total Time Taken across all Rounds: {total_round_time:.2f} seconds")
+            #print(f"Total CPU Usage across all Rounds: {total_cpu_usage:.2f}%")
+            #print(f"Total Time Taken across all Rounds: {total_round_time:.2f} seconds")
 
             # Calculate total and average training times
-            total_training_time = sum(total_training_time_per_round)
+            #total_training_time = sum(total_training_time_per_round)
             avg_training_time = np.mean(total_training_time_per_round) if args.rounds > 0 else 0
-            print(f"Total Training Time across all Rounds: {total_training_time:.2f} seconds")
+            #print(f"Total Training Time across all Rounds: {total_training_time:.2f} seconds")
             print(f"Average Training Time per Round: {avg_training_time:.2f} seconds")
 
             # Calculate total and average aggregation times
-            total_aggregation_time = sum(total_aggregation_time_per_round)
+            #total_aggregation_time = sum(total_aggregation_time_per_round)
             avg_aggregation_time = np.mean(total_aggregation_time_per_round) if args.rounds > 0 else 0
-            print(f"Total Aggregation Time across all Rounds: {total_aggregation_time:.4f} seconds")
+            #print(f"Total Aggregation Time across all Rounds: {total_aggregation_time:.4f} seconds")
             print(f"Average Aggregation Time per Round: {avg_aggregation_time:.4f} seconds")
         else:
             print("\nNo metrics recorded to compute averages.")
+        
+        # Compute average evaluation metrics over all nodes and rounds
+        total_test_losses = []
+        total_accuracies = []
+        total_f1_scores = []
+        total_precisions = []
+        total_recalls = []
+
+        for node in metrics:
+            total_test_losses.extend(metrics[node]['loss'])
+            total_accuracies.extend(metrics[node]['accuracy'])
+            total_f1_scores.extend(metrics[node]['f1_score'])
+            total_precisions.extend(metrics[node]['precision'])
+            total_recalls.extend(metrics[node]['recall'])
+
+        # Now compute the averages
+        avg_test_loss = np.mean(total_test_losses)
+        avg_accuracy = np.mean(total_accuracies)
+        avg_f1_score = np.mean(total_f1_scores)
+        avg_precision = np.mean(total_precisions)
+        avg_recall = np.mean(total_recalls)
+
+        # Print the averages
+        print("\nAverage Evaluation Metrics over all nodes and rounds:")
+        print(f"Average Test Loss: {avg_test_loss:.4f}")
+        print(f"Average Accuracy: {avg_accuracy:.4f}")
+        print(f"Average F1 Score: {avg_f1_score:.4f}")
+        print(f"Average Precision: {avg_precision:.4f}")
+        print(f"Average Recall: {avg_recall:.4f}")
+
 
         print("\nSimulation complete. Plots have been saved as PNG files.")
     except Exception as e:
