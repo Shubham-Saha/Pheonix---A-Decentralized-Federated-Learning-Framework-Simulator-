@@ -359,7 +359,7 @@ def display_and_store_model_parameters(node_name, model_state_dict, node_stats, 
         node_stats[node_name][key]['std'].append(std)
 
 # Plotting functions
-def plot_metrics_bar_chart(metrics, rounds_range):
+def plot_metrics(metrics, rounds_range):
     # Prepare data for training metrics
     avg_metrics_train = {
         'Accuracy': [],
@@ -450,6 +450,48 @@ def plot_metrics_bar_chart(metrics, rounds_range):
     plt.savefig('average_testing_metrics_bar_chart.png')
     plt.close()
     print("Average testing metrics bar chart saved as 'average_testing_metrics_bar_chart.png'.")
+
+    # Plot Training Metrics
+    plt.figure(figsize=(10, 6))
+    rounds = list(rounds_range)
+    # Use a colorblind-friendly palette from seaborn
+    palette = sns.color_palette("Set2", 4)
+
+    plt.plot(rounds, avg_metrics_train['Accuracy'], marker='o', label='Accuracy', color=palette[0])
+    plt.plot(rounds, avg_metrics_train['F1 Score'], marker='s', label='F1 Score', color=palette[1])
+    plt.plot(rounds, avg_metrics_train['Precision'], marker='^', label='Precision', color=palette[2])
+    plt.plot(rounds, avg_metrics_train['Recall'], marker='d', label='Recall', color=palette[3])
+
+    plt.ylabel('Metric Value')
+    plt.xlabel('Round')
+    plt.title('Average Training Metrics per Round (Line Plot)')
+    plt.xticks(rounds)
+    plt.ylim(0, 1)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig('average_training_metrics_line_plot.png')
+    plt.close()
+    print("Average training metrics line plot saved as 'average_training_metrics_line_plot.png'.")
+
+    # Plot Testing Metrics
+    plt.figure(figsize=(10, 6))
+    plt.plot(rounds, avg_metrics_test['Accuracy'], marker='o', label='Accuracy', color=palette[0])
+    plt.plot(rounds, avg_metrics_test['F1 Score'], marker='s', label='F1 Score', color=palette[1])
+    plt.plot(rounds, avg_metrics_test['Precision'], marker='^', label='Precision', color=palette[2])
+    plt.plot(rounds, avg_metrics_test['Recall'], marker='d', label='Recall', color=palette[3])
+
+    plt.ylabel('Metric Value')
+    plt.xlabel('Round')
+    plt.title('Average Testing Metrics per Round (Line Plot)')
+    plt.xticks(rounds)
+    plt.ylim(0, 1)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig('average_testing_metrics_line_plot.png')
+    plt.close()
+    print("Average testing metrics line plot saved as 'average_testing_metrics_line_plot.png'.")
 
 
 def plot_loss_line(metrics, rounds_range):
@@ -794,7 +836,7 @@ def main_with_plot():
             avg_aggregation_time_per_round.append(avg_aggregation_time)
 
         # Plot the metrics
-        plot_metrics_bar_chart(metrics, rounds_range)  # Existing plot
+        plot_metrics(metrics, rounds_range)  # Existing plot
         plot_loss_line(metrics, rounds_range)           # Existing plot
         plot_training_aggregation_times(rounds_range, total_training_time_per_round, avg_training_time_per_round,
                                        total_aggregation_time_per_round, avg_aggregation_time_per_round)  # New plot
