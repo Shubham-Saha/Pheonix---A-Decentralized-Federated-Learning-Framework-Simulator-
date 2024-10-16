@@ -637,9 +637,26 @@ def run_simulation():
             attacker_rng = random.Random(12345)
             attacker_node_ids = attacker_rng.sample(range(num_nodes), num_attackers)
         print(f"Attacker nodes: {attacker_node_ids} with attacks: {args.attacks}")
-        # Initialize attack counts for each attacker
-        for attacker_node in attacker_node_ids:
-                attack_counts[attacker_node] = 0  # Initialize attack count to 0
+        
+        # Precompute the rounds in which each attacker participates
+        attacker_participation_rounds = {attacker_node_id: [] for attacker_node_id in attacker_node_ids}
+        for rnd, participating_nodes in enumerate(participating_nodes_per_round, start=1):
+            for attacker_node_id in attacker_node_ids:
+                if attacker_node_id in participating_nodes:
+                    attacker_participation_rounds[attacker_node_id].append(rnd)
+
+        
+         # For each attacker node, randomly select rounds to perform attacks
+        attacker_attack_rounds = {}
+        for attacker_node_id in attacker_node_ids:
+            participation_rounds = attacker_participation_rounds[attacker_node_id]
+            max_attacks = args.max_attacks
+            if max_attacks is None or max_attacks >= len(participation_rounds):
+                # Attacker will perform attack in all participation rounds
+                attack_rounds = participation_rounds
+            else:
+                attack_rounds = random.sample(participation_rounds, max_attacks)
+            attacker_attack_rounds[attacker_node_id] = set(attack_rounds)
 
 
     # Initialize local models for each node
@@ -669,18 +686,13 @@ def run_simulation():
             for node in participating_nodes:
                 attacker_type = None
                 if node in attacker_node_ids:
-                    # Determine if the attacker will perform an attack in this round
-                    max_attacks = args.max_attacks
-                    performed_attacks = attack_counts[node]
-                    if max_attacks is None or performed_attacks < max_attacks:
-                    # Attacker will perform an attack
+                    if rnd in attacker_attack_rounds[node]:
+                    # The node will perform an attack in this round
                         if args.attacks:
                             attacker_type = random.choice(args.attacks)
-                            attack_counts[node] += 1  # Increment attack count
-                            print(f"Node {node} is performing '{attacker_type}' attack.")
+                            print(f"Node {node} is performing '{attacker_type}' attack in round {rnd}.")
                     else:
-                        # Attacker will not perform an attack
-                        print(f"Node {node} is an attacker but will not perform attack in this round (attack limit reached).")
+                        print(f"Node {node} is an attacker but will not perform attack in round {rnd}.")
                 # Load the local model
                 local_model = local_models[node]
                 # Submit local training task
